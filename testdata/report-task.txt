@@ -1,0 +1,6 @@
+projectKey=com.sonarqube:test
+serverUrl=https://sonarqube.com
+serverVersion=7.6.0.21501
+dashboardUrl=https://sonarqube.com/dashboard?id=com.ciicgat.grus%3Agrus
+ceTaskId=AXuWUfkTNTBeE4G2ybQQ
+ceTaskUrl=https://sonarqube.com/api/ce/task?id=AXuWUfkTNTBeE4G2ybQQ

@@ -51,7 +51,7 @@ func main() {
 		}
 		if !info.IsDir() && info.Name() == "report-task.txt" {
 			reportTaskFile = filepath.Join(reportTaskPath, path)
-			fmt.Println("detect report-task.txt in: " + reportTaskFile)
+			log.Println("detect report file: " + reportTaskFile)
 			return filepath.SkipDir
 		}
 		return nil
@@ -60,7 +60,7 @@ func main() {
 		log.Fatalln("cannot find report-task.txt")
 	}
 	reportTask := readFromFile(reportTaskFile)
-	fmt.Println(reportTask.CeTaskUrl)
+	log.Println("CeTaskUrl: " + reportTask.CeTaskUrl)
 
 	timeOutCh := time.After(time.Second * time.Duration(waitSeconds))
 
@@ -70,8 +70,10 @@ func main() {
 			result := getCeTaskResult(reportTask.CeTaskUrl)
 			switch result.Task.Status {
 			case "SUCCESS":
+				log.Println("SUCCESS")
 				return
 			case "PENDING", "IN_PROGRESS":
+				log.Println("WAITING......")
 				time.Sleep(time.Second * 2)
 			default:
 				// sonarqube扫描失败
@@ -79,7 +81,7 @@ func main() {
 				log.Fatalln(msg)
 			}
 		case <-timeOutCh:
-			log.Fatalf("timeout")
+			log.Fatalf("task timeout after %d seconds", waitSeconds)
 		}
 	}
 }
@@ -95,7 +97,9 @@ func readFromFile(reportTaskFile string) *ReportTask {
 	rd := bufio.NewReader(f)
 	for {
 		line, err := rd.ReadString('\n')
-		if err != nil && err != io.EOF {
+		if err == io.EOF {
+			break
+		} else if err != nil {
 			log.Fatalf("read file line error: %v", err)
 		}
 		kv := strings.SplitN(line, "=", 2)
@@ -113,9 +117,6 @@ func readFromFile(reportTaskFile string) *ReportTask {
 			reportTask.CeTaskId = value
 		} else if key == "ceTaskUrl" {
 			reportTask.CeTaskUrl = value
-		}
-		if err == io.EOF {
-			break
 		}
 	}
 	return reportTask

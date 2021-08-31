@@ -1,0 +1,1 @@
+go build -o sonar-build-breaker main.go

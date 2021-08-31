@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,15 @@ type CeTaskResult struct {
 		ComponentKey string `json:"componentKey"`
 		Status       string `json:"status"`
 	} `json:"task"`
+}
+
+type ProjectStatusResult struct {
+	ProjectStatus struct {
+		Conditions        []map[string]interface{} `json:"conditions"`
+		Periods           []map[string]interface{} `json:"periods"`
+		IgnoredConditions bool                     `json:"ignoredConditions"`
+		Status            string                   `json:"status"`
+	} `json:"projectStatus"`
 }
 
 func main() {
@@ -60,30 +70,10 @@ func main() {
 		log.Fatalln("cannot find report-task.txt")
 	}
 	reportTask := readFromFile(reportTaskFile)
-	log.Println("CeTaskUrl: " + reportTask.CeTaskUrl)
 
-	timeOutCh := time.After(time.Second * time.Duration(waitSeconds))
+	waitingTaskCompleted(reportTask, waitSeconds)
 
-	for {
-		select {
-		default:
-			result := getCeTaskResult(reportTask.CeTaskUrl)
-			switch result.Task.Status {
-			case "SUCCESS":
-				log.Println("SUCCESS")
-				return
-			case "PENDING", "IN_PROGRESS":
-				log.Println("WAITING......")
-				time.Sleep(time.Second * 2)
-			default:
-				// sonarqube扫描失败
-				msg := "sonarqube latest analysis failed ,status " + result.Task.Status
-				log.Fatalln(msg)
-			}
-		case <-timeOutCh:
-			log.Fatalf("task timeout after %d seconds", waitSeconds)
-		}
-	}
+	checkProjectStatus(reportTask)
 }
 
 func readFromFile(reportTaskFile string) *ReportTask {
@@ -97,29 +87,55 @@ func readFromFile(reportTaskFile string) *ReportTask {
 	rd := bufio.NewReader(f)
 	for {
 		line, err := rd.ReadString('\n')
-		if err == io.EOF {
+		if line != "" {
+			kv := strings.SplitN(line, "=", 2)
+			key := strings.TrimSpace(kv[0])
+			value := strings.TrimSpace(kv[1])
+			if key == "projectKey" {
+				reportTask.ProjectKey = value
+			} else if key == "serverUrl" {
+				reportTask.ServerUrl = value
+			} else if key == "serverVersion" {
+				reportTask.ServerVersion = value
+			} else if key == "dashboardUrl" {
+				reportTask.DashboardUrl = value
+			} else if key == "ceTaskId" {
+				reportTask.CeTaskId = value
+			} else if key == "ceTaskUrl" {
+				reportTask.CeTaskUrl = value
+			}
+		} else if err == io.EOF {
 			break
 		} else if err != nil {
 			log.Fatalf("read file line error: %v", err)
 		}
-		kv := strings.SplitN(line, "=", 2)
-		key := strings.TrimSpace(kv[0])
-		value := strings.TrimSpace(kv[1])
-		if key == "projectKey" {
-			reportTask.ProjectKey = value
-		} else if key == "serverUrl" {
-			reportTask.ServerUrl = value
-		} else if key == "serverVersion" {
-			reportTask.ServerVersion = value
-		} else if key == "dashboardUrl" {
-			reportTask.DashboardUrl = value
-		} else if key == "ceTaskId" {
-			reportTask.CeTaskId = value
-		} else if key == "ceTaskUrl" {
-			reportTask.CeTaskUrl = value
-		}
 	}
 	return reportTask
+}
+
+func waitingTaskCompleted(reportTask *ReportTask, waitSeconds uint) {
+	log.Println("CeTaskUrl: " + reportTask.CeTaskUrl)
+	timeOutCh := time.After(time.Second * time.Duration(waitSeconds))
+	for {
+		select {
+		default:
+			result := getCeTaskResult(reportTask.CeTaskUrl)
+			switch result.Task.Status {
+			case "SUCCESS":
+				log.Println("ce task completed")
+				return
+			case "PENDING", "IN_PROGRESS":
+				log.Println("WAITING......")
+				time.Sleep(time.Second * 2)
+			default:
+				// sonarqube analysis failed
+				msg := "sonarqube latest analysis failed ,status " + result.Task.Status
+				log.Fatalln(msg)
+			}
+		case <-timeOutCh:
+			log.Fatalf("task timeout after %d seconds", waitSeconds)
+		}
+	}
 }
 
 func getCeTaskResult(ceTaskUrl string) *CeTaskResult {
@@ -138,4 +154,34 @@ func getCeTaskResult(ceTaskUrl string) *CeTaskResult {
 		log.Fatalf("get ce task result error: %v", err)
 	}
 	return &s
+}
+
+func checkProjectStatus(reportTask *ReportTask) {
+	projectStatusUrl := fmt.Sprintf("%s/api/qualitygates/project_status?projectKey=%s", reportTask.ServerUrl, url.QueryEscape(reportTask.ProjectKey))
+	log.Println("ProjectStatusUrl: " + projectStatusUrl)
+	response, err := http.Get(projectStatusUrl)
+	if err != nil {
+		log.Fatalf("get project status result error: %v", err)
+	}
+	defer response.Body.Close()
+
+	body, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		log.Fatalf("get project status result error: %v", err)
+	}
+	var s ProjectStatusResult
+	if err = json.Unmarshal(body, &s); err != nil {
+		log.Fatalf("get project status result error: %v", err)
+	}
+	if s.ProjectStatus.Status == "OK" {
+		log.Println("PASS SONAR GATEWAY CHECK")
+		return
+	}
+	for _, condition := range s.ProjectStatus.Conditions {
+		if condition["status"].(string) != "OK" {
+			bs, _ := json.Marshal(condition)
+			log.Printf("failed metric: %s", string(bs))
+		}
+	}
+	log.Fatalf("SONAR GATEWAY CHECK FAILED WITH STATUS: %s", s.ProjectStatus.Status)
 }

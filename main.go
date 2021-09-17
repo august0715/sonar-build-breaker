@@ -70,7 +70,7 @@ func main() {
 		log.Fatalln("cannot find report-task.txt")
 	}
 	reportTask := readFromFile(reportTaskFile)
-
+	log.Println("DashboardUrl: " + reportTask.DashboardUrl)
 	waitingTaskCompleted(reportTask, waitSeconds)
 
 	checkProjectStatus(reportTask)
